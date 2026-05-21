@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Top-Down Shooter</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 600px;
+        }
+        canvas {
+            background: #1a1a1a;
+            border: 4px solid #333;
+            display: block;
+        }
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 15, 15, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        h1 { font-size: 3rem; color: #ff3333; margin-bottom: 10px; text-shadow: 2px 2px #000; }
+        p { font-size: 1.2rem; margin-bottom: 30px; text-align: center; line-height: 1.6; }
+        button {
+            padding: 12px 30px;
+            font-size: 1.5rem;
+            background: #ff3333;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+            box-shadow: 4px 4px #800000;
+        }
+        button:hover { background: #ff5555; }
+        button:active { transform: translate(2px, 2px); box-shadow: 2px 2px #800000; }
+        .hide { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <!-- Menu Screen -->
+    <div id="menuScreen" class="screen">
+        <h1>RETRO SHOOTER</h1>
+        <p>Use <b>Arrow Keys</b> to Move.<br>Use <b>Mouse</b> to Aim and <b>Left-Click</b> to Shoot.</p>
+        <button onclick="startGame()">START GAME</button>
+    </div>
+
+    <!-- Game Over / Victory Screen -->
+    <div id="endScreen" class="screen hide">
+        <h1 id="endTitle">GAME OVER</h1>
+        <p id="endDetails"></p>
+        <button onclick="restartGame()">PLAY AGAIN</button>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Game States
+let state = 'MENU'; // MENU, PLAYING, GAMEOVER, VICTORY
+let currentLevel = 1;
+const maxLevels = 3;
+
+// Input tracking
+const keys = {};
+const mouse = { x: 0, y: 0 };
+
+// Entities
+let player;
+let bullets = [];
+let enemies = [];
+let particles = [];
+let spawnTimer = 0;
+let enemiesSpawnedThisLevel = 0;
+
+// Level Configuration
+const levelConfig = {
+    1: { enemySpeed: 1.5, targetKills: 10, spawnRate: 90 },
+    2: { enemySpeed: 2.2, targetKills: 15, spawnRate: 60 },
+    3: { enemySpeed: 3.0, targetKills: 25, spawnRate: 45 }
+};
+
+// Event Listeners
+window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+});
+canvas.addEventListener('mousedown', e => {
+    if (state === 'PLAYING' && e.button === 0) fireBullet();
+});
+
+class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 16;
+        this.speed = 4;
+        this.angle = 0;
+        this.health = 100;
+        this.animFrame = 0;
+    }
+
+    update() {
+        // Movement via Arrow Keys
+        if (keys['ArrowUp'] && this.y > this.radius) this.y -= this.speed;
+        if (keys['ArrowDown'] && this.y < canvas.height - this.radius) this.y += this.speed;
+        if (keys['ArrowLeft'] && this.x > this.radius) this.x -= this.speed;
+        if (keys['ArrowRight'] && this.x < canvas.width - this.radius) this.x += this.speed;
+
+        // Dynamic Angle facing the mouse
+        this.angle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+
+        // Simple animation wave based on movement
+        if (keys['ArrowUp'] || keys['ArrowDown'] || keys['ArrowLeft'] || keys['ArrowRight']) {
+            this.animFrame += 0.2;
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        // Retro procedural styling (No assets needed)
+        // Gun
+        ctx.fillStyle = '#777';
+        ctx.fillRect(10, -4, 18, 8);
+        
+        // Character Body
+        ctx.fillStyle = '#00ffcc';
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#00aa88';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Animated Retro Shoulders/Hands
+        const bob = Math.sin(this.animFrame) * 3;
+        ctx.fillStyle = '#00ffcc';
+        ctx.beginPath();
+        ctx.arc(2, -10 + bob, 5, 0, Math.PI * 2);
+        ctx.arc(2, 10 - bob, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+    }
+}
+
+class Enemy {
+    constructor(x, y, speed) {
+        this.x = x;
+        this.y = y;
+        this.radius = 14;
+        this.speed = speed;
+        this.health = 1;
+    }
+
+    update() {
+        // Move directly toward player position
+        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+        this.x += Math.cos(angle) * this.speed;
+        this.y += Math.sin(angle) * this.speed;
+    }
+
+    draw() {
+        ctx.fillStyle = '#ff3333';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#990000';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // Spikes for classic retro enemy styling
+        ctx.fillStyle = '#990000';
+        for(let i=0; i<4; i++) {
+            ctx.fillRect(this.x - 3, this.y - 3, 6, 6);
+        }
+    }
+}
+
+class Bullet {
+    constructor(x, y, angle) {
+        this.x = x;
+        this.y = y;
+        this.radius = 4;
+        this.speed = 10;
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    draw() {
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 6;
+        this.vy = (Math.random() - 0.5) * 6;
+        this.alpha = 1;
+        this.color = color;
+    }
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= 0.04;
+    }
+    draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, 4, 4);
+        ctx.restore();
+    }
+}
+
+function fireBullet() {
+    // Generate bullet originating near muzzle position
+    const muzzleX = player.x + Math.cos(player.angle) * 20;
+    const muzzleY = player.y + Math.sin(player.angle) * 20;
+    bullets.push(new Bullet(muzzleX, muzzleY, player.angle));
+}
+
+function spawnEnemy() {
+    const config = levelConfig[currentLevel];
+    if (enemiesSpawnedThisLevel >= config.targetKills) return;
+
+    // Pick a random edge outside the screen canvas view perimeter
+    let x, y;
+    if (Math.random() < 0.5) {
+        x = Math.random() < 0.5 ? -20 : canvas.width + 20;
+        y = Math.random() * canvas.height;
+    } else {
+        x = Math.random() * canvas.width;
+        y = Math.random() < 0.5 ? -20 : canvas.height + 20;
+    }
+    enemies.push(new Enemy(x, y, config.enemySpeed));
+    enemiesSpawnedThisLevel++;
+}
+
+function checkCollision(obj1, obj2) {
+    const dist = Math.hypot(obj1.x - obj2.x, obj1.y - obj2.y);
+    return dist < obj1.radius + obj2.radius;
+}
+
+function createExplosion(x, y, color) {
+    for(let i=0; i<8; i++) particles.push(new Particle(x, y, color));
+}
+
+function startGame() {
+    document.getElementById('menuScreen').classList.add('hide');
+    document.getElementById('endScreen').classList.add('hide');
+    player = new Player(canvas.width / 2, canvas.height / 2);
+    bullets = [];
+    enemies = [];
+    particles = [];
+    currentLevel = 1;
+    enemiesSpawnedThisLevel = 0;
+    state = 'PLAYING';
+}
+
+function restartGame() {
+    startGame();
+}
+
+function nextLevel() {
+    if (currentLevel >= maxLevels) {
+        state = 'VICTORY';
+        showEndScreen("VICTORY!", "You survived all waves!");
+    } else {
+        currentLevel++;
+        enemiesSpawnedThisLevel = 0;
+        enemies = [];
+        bullets = [];
+    }
+}
+
+function showEndScreen(title, details) {
+    document.getElementById('endTitle').innerText = title;
+    document.getElementById('endDetails').innerText = details;
+    document.getElementById('endScreen').classList.remove('hide');
+}
+
+// Main Game Loop Engine
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (state === 'PLAYING') {
+        const config = levelConfig[currentLevel];
+
+        // Handles Enemy Spawn Generation Rates
+        spawnTimer++;
+        if (spawnTimer >= config.spawnRate) {
+            spawnEnemy();
+            spawnTimer = 0;
+        }
+
+        player.update();
+        player.draw();
+
+        // Update & Render bullets
+        bullets.forEach((bullet, bIndex) => {
+            bullet.update();
+            bullet.draw();
+            // Out of bounds cleanup
+            if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                bullets.splice(bIndex, 1);
+            }
+        });
+
+        // Update & Render Enemies
+        enemies.forEach((enemy, eIndex) => {
+            enemy.update();
+            enemy.draw();
+
+            // Hit Player Collision
+            if (checkCollision(player, enemy)) {
+                player.health -= 20;
+                createExplosion(player.x, player.y, '#ff3333');
+                enemies.splice(eIndex, 1);
+                if (player.health <= 0) {
+                    state = 'GAMEOVER';
+                    showEndScreen("GAME OVER", `Failed on Wave ${currentLevel}`);
+                }
+            }
+
+            // Bullet Hits Enemy Collision
+            bullets.forEach((bullet, bIndex) => {
+                if (checkCollision(bullet, enemy)) {
+                    createExplosion(enemy.x, enemy.y, '#ff8888');
+                    enemies.splice(eIndex, 1);
+                    bullets.splice(bIndex, 1);
+                }
+            });
+        });
+
+        // Update particles
+        particles.forEach((p, index) => {
+            p.update();
+            p.draw();
+            if (p.alpha <= 0) particles.splice(index, 1);
+        });
+
+        // UI Text Render HUD Layer
+        ctx.fillStyle = '#fff';
+        ctx.font = '18px "Courier New"';
+        ctx.fillText(`WAVE: ${currentLevel}/${maxLevels}`, 20, 30);
+        ctx.fillText(`HEALTH: ${player.health}%`, 20, 50);
+        ctx.fillText(`SPAWNED: ${enemiesSpawnedThisLevel}/${config.targetKills}`, 20, 70);
+
+        // Advance level verification criteria
+        if (enemiesSpawnedThisLevel >= config.targetKills && enemies.length === 0) {
+            nextLevel();
+        }
+    }
+
+    requestAnimationFrame(loop);
+}
+
+// Boot loop sequence initialization
+loop();
+</script>
+</body>
+</html>
