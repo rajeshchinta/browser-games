@@ -19,14 +19,18 @@ There are no build, lint, or test commands — the files run as-is in the browse
 
 ## Git Workflow
 
-All changes are committed and pushed to GitHub. Commit messages follow this pattern:
+**Commit and push after every meaningful unit of work** — a working feature, a bug fix, a new game file, or any change the user would want to be able to revert to. Never let significant work accumulate without a checkpoint. If a task spans multiple steps, commit at each stable point rather than waiting until the end.
+
+Commit messages follow this pattern:
 - `feat: <description>` — new feature or game
 - `fix: <description>` — bug fix
 - `refactor: <description>` — code restructure without behavior change
 - `style: <description>` — visual/UI changes
 
-Always push after committing:
+Always stage specific files (not `git add .`) and push immediately after committing:
 ```
+git add <file>
+git commit -m "feat: ..."
 git push
 ```
 
